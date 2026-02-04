@@ -22,16 +22,18 @@ type DownloadDetails struct {
 }
 
 type TransferManagerService struct {
-	premiumizemeClient *premiumizeme.Premiumizeme
-	arrsManager        *ArrsManagerService
-	config             *config.Config
-	lastUpdated        int64
-	transfers          []premiumizeme.Transfer
-	runningTask        bool
-	downloadListMutex  *sync.Mutex
-	downloadList       map[string]*DownloadDetails
-	status             string
-	downloadsFolderID  string
+	premiumizemeClient   *premiumizeme.Premiumizeme
+	arrsManager          *ArrsManagerService
+	config               *config.Config
+	lastUpdated          int64
+	transfers            []premiumizeme.Transfer
+	runningTask          bool
+	downloadListMutex    *sync.Mutex
+	downloadList         map[string]*DownloadDetails
+	status               string
+	downloadsFolderID    string
+	failedDownloadsMutex *sync.Mutex
+	failedDownloads      map[string]time.Time // Maps item name to failure timestamp
 }
 
 // Handle
@@ -46,6 +48,8 @@ func (t TransferManagerService) New() TransferManagerService {
 	t.downloadList = make(map[string]*DownloadDetails, 0)
 	t.status = ""
 	t.downloadsFolderID = ""
+	t.failedDownloadsMutex = &sync.Mutex{}
+	t.failedDownloads = make(map[string]time.Time, 0)
 	return t
 }
 
@@ -203,6 +207,18 @@ func (manager *TransferManagerService) TaskCheckPremiumizeDownloadsFolder() {
 	}
 
 	for _, item := range items {
+		// Skip items that are currently downloading
+		if manager.downloadExists(item.Name) {
+			log.Tracef("Item %s is already downloading", item.Name)
+			continue
+		}
+
+		// Skip items in cooldown period after failed download
+		if manager.isDownloadInCooldown(item.Name) {
+			log.Debugf("Skipping item %s - in cooldown period after previous failure", item.Name)
+			continue
+		}
+
 		if manager.countDownloads() < manager.config.SimultaneousDownloads {
 			log.Debugf("Processing completed item: %s", item.Name)
 			manager.HandleFinishedItem(item, manager.config.DownloadsDirectory)
@@ -257,6 +273,29 @@ func (manager *TransferManagerService) downloadExists(itemName string) bool {
 	return false
 }
 
+func (manager *TransferManagerService) markDownloadFailed(itemName string) {
+	manager.failedDownloadsMutex.Lock()
+	defer manager.failedDownloadsMutex.Unlock()
+	manager.failedDownloads[itemName] = time.Now()
+	log.Warnf("Marked %s as failed, will retry after cooldown period", itemName)
+}
+
+func (manager *TransferManagerService) isDownloadInCooldown(itemName string) bool {
+	manager.failedDownloadsMutex.Lock()
+	defer manager.failedDownloadsMutex.Unlock()
+
+	if failureTime, exists := manager.failedDownloads[itemName]; exists {
+		// 30 minute cooldown period before retrying
+		if time.Since(failureTime) < 30*time.Minute {
+			log.Tracef("Item %s is in cooldown period (failed at %v)", itemName, failureTime)
+			return true
+		}
+		// Cooldown expired, remove from failed list
+		delete(manager.failedDownloads, itemName)
+	}
+	return false
+}
+
 func (manager *TransferManagerService) HandleFinishedItem(item premiumizeme.Item, downloadDirectory string) {
 	if manager.downloadExists(item.Name) {
 		log.Tracef("Transfer %s is already downloading", item.Name)
@@ -295,13 +334,11 @@ func (manager *TransferManagerService) HandleFinishedItem(item premiumizeme.Item
 		err := manager.downloadFolderRecursively(item, downloadDirectory)
 		if err != nil {
 			log.Errorf("Error downloading item %s: %s", item.Name, err)
-			manager.removeDownload(item.Name)
 			return
 		}
 
 		err = manager.premiumizemeClient.DeleteFolder(item.ID)
 		if err != nil {
-			manager.removeDownload(item.Name)
 			log.Errorf("Error deleting folder on premiumize.me: %s", err)
 			return
 		}
@@ -328,10 +365,12 @@ func (manager *TransferManagerService) downloadFolderRecursively(item premiumize
 		//		no return due to os permissions sometime inaccurately throwing errors on different configurations
 	}
 
+	var folderHasErrors bool = false
+	var parentItemName = item.Name // Store parent folder name before loop to avoid variable shadowing
 	for _, item := range items {
 		if manager.downloadExists(item.Name) {
 			log.Tracef("Transfer %s is already downloading", item.Name)
-			return nil
+			continue
 		}
 		if item.Type == "file" {
 			manager.addDownload(&item)
@@ -347,15 +386,26 @@ func (manager *TransferManagerService) downloadFolderRecursively(item premiumize
 			err = progress_downloader.DownloadFile(checkcertificate, ratelimit, link, fileSavePath, manager.downloadList[item.Name].ProgressDownloader)
 			if err != nil {
 				manager.removeDownload(item.Name)
-				return fmt.Errorf("error downloading file %s: %w", item.Name, err)
+				manager.markDownloadFailed(item.Name)
+				log.Errorf("Error downloading file %s: %w, continuing with other files", item.Name, err)
+				folderHasErrors = true
+				continue // Continue with next file instead of aborting
 			}
 			manager.removeDownload(item.Name)
 		} else if item.Type == "folder" {
 			err = manager.downloadFolderRecursively(item, savePath)
 			if err != nil {
-				return fmt.Errorf("error downloading folder %s: %w", item.Name, err)
+				manager.markDownloadFailed(item.Name)
+				log.Errorf("Error downloading folder %s: %w, continuing with other items", item.Name, err)
+				folderHasErrors = true
+				continue // Continue with next item instead of aborting
 			}
 		}
+	}
+
+	// Return error if any items failed to prevent parent folder deletion
+	if folderHasErrors {
+		return fmt.Errorf("folder %s had errors downloading some items, but completed others", parentItemName)
 	}
 	return nil
 }
