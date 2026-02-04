@@ -334,6 +334,8 @@ func (manager *TransferManagerService) HandleFinishedItem(item premiumizeme.Item
 		err := manager.downloadFolderRecursively(item, downloadDirectory)
 		if err != nil {
 			log.Errorf("Error downloading item %s: %s", item.Name, err)
+			// Mark parent folder as failed so it respects cooldown and doesn't block queue
+			manager.markDownloadFailed(item.Name)
 			return
 		}
 
@@ -372,6 +374,14 @@ func (manager *TransferManagerService) downloadFolderRecursively(item premiumize
 			log.Tracef("Transfer %s is already downloading", item.Name)
 			continue
 		}
+
+		// Check cooldown for any item (file or folder) that previously failed
+		if manager.isDownloadInCooldown(item.Name) {
+			log.Debugf("Skipping item %s - in cooldown period after previous failure", item.Name)
+			folderHasErrors = true // Still mark as error to prevent folder deletion
+			continue
+		}
+
 		if item.Type == "file" {
 			manager.addDownload(&item)
 			link, err := manager.premiumizemeClient.GenerateFileLink(item.ID)
@@ -403,7 +413,7 @@ func (manager *TransferManagerService) downloadFolderRecursively(item premiumize
 		}
 	}
 
-	// Return error if any items failed to prevent parent folder deletion
+	// Return error if any items failed or are in cooldown to prevent parent folder deletion
 	if folderHasErrors {
 		return fmt.Errorf("folder %s had errors downloading some items, but completed others", parentItemName)
 	}
