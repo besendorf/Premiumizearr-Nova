@@ -346,6 +346,7 @@ func (manager *TransferManagerService) downloadFolderRecursively(item premiumize
 			var ratelimit int = manager.config.DownloadSpeedLimit
 			err = progress_downloader.DownloadFile(checkcertificate, ratelimit, link, fileSavePath, manager.downloadList[item.Name].ProgressDownloader)
 			if err != nil {
+				manager.removeDownload(item.Name)
 				return fmt.Errorf("error downloading file %s: %w", item.Name, err)
 			}
 			manager.removeDownload(item.Name)

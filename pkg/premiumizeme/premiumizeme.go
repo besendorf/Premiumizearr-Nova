@@ -109,7 +109,7 @@ func (pm *Premiumizeme) ListFolder(folderID string) ([]Item, error) {
 
 	defer resp.Body.Close()
 	res := ListFoldersResponse{}
-	log.Trace("Reading response")
+	log.Trace("List Folder: Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	if err != nil {
@@ -208,7 +208,7 @@ func (pm *Premiumizeme) CreateTransfer(filePath string, parentID string) error {
 
 	defer resp.Body.Close()
 	res := CreateTransferResponse{}
-	log.Trace("Reading response")
+	log.Trace("CreateTransfer: Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	if err != nil {
@@ -255,7 +255,7 @@ func (pm *Premiumizeme) DeleteFolder(folderID string) error {
 
 	defer resp.Body.Close()
 	res := SimpleResponse{}
-	log.Trace("Reading response")
+	log.Trace("DeleteFolder Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	if err != nil {
@@ -303,7 +303,7 @@ func (pm *Premiumizeme) MoveItem(itemID string, folderID string) error {
 
 	defer resp.Body.Close()
 	res := SimpleResponse{}
-	log.Trace("Reading response")
+	log.Trace("MoveItem Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	if err != nil {
@@ -353,7 +353,7 @@ func (pm *Premiumizeme) CreateFolder(folderName string, parentID *string) (strin
 	}
 
 	res := CreateFolderResponse{}
-	log.Trace("Reading response")
+	log.Trace("CreateFolder Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		return "", err
@@ -394,7 +394,7 @@ func (pm *Premiumizeme) DeleteTransfer(id string) error {
 
 	defer resp.Body.Close()
 	res := SimpleResponse{}
-	log.Trace("Reading response")
+	log.Trace("DeleteTransfer Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	if err != nil {
@@ -599,7 +599,7 @@ func (pm *Premiumizeme) generateZip(ID string, srcType SRCType) (string, error) 
 	// Decode response
 	defer resp.Body.Close()
 	var res GenerateZipResponse
-	log.Trace("Reading response")
+	log.Trace("generateZip Reading response")
 	err = json.NewDecoder(resp.Body).Decode(&res)
 
 	log.Tracef("Zip Response: %+v", res)

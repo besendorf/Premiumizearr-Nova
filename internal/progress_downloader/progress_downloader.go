@@ -3,6 +3,7 @@ package progress_downloader
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -104,12 +105,30 @@ func DownloadFile(checkcertificate bool, ratelimit int, url string, filepath str
 	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
 		log.Errorf("error reading wget output: %v", err)
+		// Attempt to clean up the potentially malformed file
+		if fileInfo, err := os.Stat(filepath); err == nil {
+			fileSize := fileInfo.Size()
+			if removeErr := os.Remove(filepath); removeErr == nil {
+				log.Warnf("cleaned up incomplete download file: %s (size: %d bytes)", filepath, fileSize)
+			} else {
+				log.Warnf("failed to clean up incomplete download file %s: %v", filepath, removeErr)
+			}
+		}
 		return fmt.Errorf("error reading wget output: %v", err)
 	}
 
 	// Wait for wget to finish
 	if err := cmd.Wait(); err != nil {
 		log.Errorf("wget command failed: %v", err)
+		// Attempt to clean up the potentially malformed file
+		if fileInfo, err := os.Stat(filepath); err == nil {
+			fileSize := fileInfo.Size()
+			if removeErr := os.Remove(filepath); removeErr == nil {
+				log.Warnf("cleaned up incomplete download file: %s (size: %d bytes)", filepath, fileSize)
+			} else {
+				log.Warnf("failed to clean up incomplete download file %s: %v", filepath, removeErr)
+			}
+		}
 		return fmt.Errorf("wget command failed: %v", err)
 	}
 
