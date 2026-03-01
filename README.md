@@ -3,6 +3,12 @@
 
 [![Build](https://github.com/ensingerphilipp/premiumizearr-nova/actions/workflows/build.yml/badge.svg)](https://github.com/ensingerphilipp/premiumizearr-nova/actions/workflows/build.yml)
 
+*BUGFIX Release: 
+* Prevent Download Lockup on orphaned broken links
+* More graceful Downloads (cooldown before retrying on broken downloadlinks)
+* Fix Subfolder handling
+* Improve Download Cleanup
+
 *NEW: Added Transfer-Only-Mode* ✅
 
 *NEW: Skip TLS-Certificate-Check to prevent failed 0B Downloads* ✅
