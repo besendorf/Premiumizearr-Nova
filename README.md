@@ -3,7 +3,7 @@
 
 [![Build](https://github.com/ensingerphilipp/premiumizearr-nova/actions/workflows/build.yml/badge.svg)](https://github.com/ensingerphilipp/premiumizearr-nova/actions/workflows/build.yml)
 
-*BUGFIX Release: 
+*BUGFIX Release:* 
 * Prevent Download Lockup on orphaned broken links
 * More graceful Downloads (cooldown before retrying on broken downloadlinks)
 * Fix Subfolder handling
