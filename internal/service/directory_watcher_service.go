@@ -53,7 +53,11 @@ func (dw *DirectoryWatcherService) ConfigUpdatedCallback(currentConfig config.Co
 		log.Info("Blackhole directory changed, restarting directory watcher...")
 		log.Info("Running initial directory scan...")
 		go dw.directoryScan(dw.config.BlackholeDirectory)
-		dw.watchDirectory.UpdatePath(newConfig.BlackholeDirectory)
+		if dw.watchDirectory != nil {
+			if err := dw.watchDirectory.UpdatePath(newConfig.BlackholeDirectory); err != nil {
+				log.Warnf("Could not update blackhole watcher: %v", err)
+			}
+		}
 	}
 
 	if currentConfig.TransferDirectory != newConfig.TransferDirectory {
@@ -83,6 +87,10 @@ func (dw *DirectoryWatcherService) Start() {
 
 	log.Info("Starting uploads processor...")
 	go dw.processUploads()
+	if _, err := os.Stat(dw.config.BlackholeDirectory); err != nil {
+		log.Info("Blackhole directory is unavailable; direct *arr clients can operate without it")
+		return
+	}
 
 	log.Info("Running initial directory scan...")
 	go dw.directoryScan(dw.config.BlackholeDirectory)

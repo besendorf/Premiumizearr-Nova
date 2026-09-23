@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ensingerphilipp/premiumizearr-nova/internal/config"
+	"github.com/ensingerphilipp/premiumizearr-nova/internal/directclient"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 )
@@ -31,6 +32,7 @@ type WebServerService struct {
 	directoryWatcherService *DirectoryWatcherService
 	arrsManagerService      *ArrsManagerService
 	config                  *config.Config
+	directManager           *directclient.Manager
 	srv                     *http.Server
 	listener                net.Listener
 }
@@ -92,7 +94,8 @@ func (s WebServerService) New() WebServerService {
 func (s *WebServerService) ConfigUpdatedCallback(currentConfig config.Config, newConfig config.Config) {
 	if currentConfig.BindIP != newConfig.BindIP ||
 		currentConfig.BindPort != newConfig.BindPort ||
-		currentConfig.WebRoot != newConfig.WebRoot {
+		currentConfig.WebRoot != newConfig.WebRoot ||
+		currentConfig.DirectClientAPIKey != newConfig.DirectClientAPIKey {
 		// Validate before touching the running server: a rejected change
 		// must leave the current web surface up (R2-1).
 		if _, err := validateWebRoot(newConfig.WebRoot); err != nil {
@@ -116,6 +119,10 @@ func (s *WebServerService) Init(transferManager *TransferManagerService, directo
 	s.directoryWatcherService = directoryWatcher
 	s.arrsManagerService = arrManager
 	s.config = config
+}
+
+func (s *WebServerService) SetDirectManager(manager *directclient.Manager) {
+	s.directManager = manager
 }
 
 func (s *WebServerService) Start() {
@@ -160,6 +167,11 @@ func (s *WebServerService) Start() {
 	}
 
 	r := mux.NewRouter()
+	if s.directManager != nil {
+		// *arr speaks these protocols directly, independent of UI WebRoot.
+		r.PathPrefix("/qbit/").Handler(http.StripPrefix("/qbit", directclient.NewQBitHandler(s.directManager, "premiumizearr", s.config.DirectClientAPIKey)))
+		r.PathPrefix("/sab/").Handler(http.StripPrefix("/sab", directclient.NewSABHandler(s.directManager, s.config.DirectClientAPIKey)))
+	}
 	registerAPIRoutes := func(rt *mux.Router) {
 		rt.HandleFunc("/api/transfers", s.TransfersHandler)
 		rt.HandleFunc("/api/downloads", s.DownloadsHandler)

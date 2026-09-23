@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/ioutil"
 
 	"github.com/ensingerphilipp/premiumizearr-nova/internal/utils"
@@ -26,6 +29,13 @@ func LoadOrCreateConfig(altConfigLocation string, _appCallback AppCallback) (Con
 			return config, err
 		}
 	}
+	if config.DirectClientAPIKey == "" {
+		var token [24]byte
+		if _, err := rand.Read(token[:]); err != nil {
+			return config, fmt.Errorf("generate direct client key: %w", err)
+		}
+		config.DirectClientAPIKey = hex.EncodeToString(token[:])
+	}
 
 	// Override directory if running in docker
 	if utils.IsRunningInDockerContainer() {
@@ -45,7 +55,9 @@ func LoadOrCreateConfig(altConfigLocation string, _appCallback AppCallback) (Con
 	config.appCallback = _appCallback
 	config.altConfigLocation = altConfigLocation
 
-	config.Save()
+	if err := config.Save(); err != nil {
+		return config, err
+	}
 
 	return config, nil
 }
@@ -65,9 +77,12 @@ func (c *Config) Save() error {
 	}
 
 	log.Tracef("Writing config to %s", savePath)
-	err = ioutil.WriteFile(savePath, data, 0644)
+	err = ioutil.WriteFile(savePath, data, 0600)
 	if err != nil {
 		log.Errorf("Failed to save config file: %+v", err)
+		return err
+	}
+	if err := os.Chmod(savePath, 0600); err != nil {
 		return err
 	}
 

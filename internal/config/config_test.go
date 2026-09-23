@@ -25,6 +25,31 @@ func readConfigFile(t *testing.T, dir string) string {
 	return string(data)
 }
 
+func TestDirectClientKeyGeneratedOnceAndSavedPrivate(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadOrCreateConfig(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.DirectClientAPIKey) != 48 {
+		t.Fatalf("generated direct client key length = %d, want 48", len(cfg.DirectClientAPIKey))
+	}
+	info, err := os.Stat(path.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("config permissions = %04o, want 0600", got)
+	}
+	reloaded, err := LoadOrCreateConfig(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.DirectClientAPIKey != cfg.DirectClientAPIKey {
+		t.Fatal("direct client key changed after restart")
+	}
+}
+
 // TestLoadConfigFromDiskBackfillsGracePeriod verifies that a legacy config
 // file without ErroredTransferDeleteGracePeriodSeconds is backfilled with
 // the 300 second default on load, and that the backfilled value is written

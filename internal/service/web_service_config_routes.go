@@ -146,6 +146,10 @@ func (s *WebServerService) ConfigHandler(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
+		if strings.TrimSpace(newConfig.DirectClientAPIKey) == "" {
+			EncodeAndWriteConfigChangeResponse(w, &ConfigChangeResponse{Succeeded: false, Status: "DirectClientAPIKey must not be empty"})
+			return
+		}
 		s.config.UpdateConfig(newConfig)
 		EncodeAndWriteConfigChangeResponse(w, &ConfigChangeResponse{
 			Succeeded: true,

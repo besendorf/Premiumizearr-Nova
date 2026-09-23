@@ -23,6 +23,7 @@
   import { CalculateAPIPath } from "../Utilities/web_root";
 
   let config = {
+    DirectClientAPIKey: "",
     BlackholeDirectory: "",
     PollBlackholeDirectory: false,
     PollBlackholeIntervalMinutes: 10,
@@ -330,6 +331,13 @@
           />
         </FormGroup>
       <h4>Directory Settings</h4>
+      <FormGroup>
+        <TextInput
+          disabled={inputDisabled}
+          labelText="Direct *arr client key (SABnzbd API key / qBittorrent password)"
+          bind:value={config.DirectClientAPIKey}
+        />
+      </FormGroup>
       <FormGroup>
         <TextInput
           disabled={inputDisabled}
