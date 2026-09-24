@@ -3,7 +3,7 @@ package stringqueue
 import "sync"
 
 func NewStringQueue() *StringQueue {
-	return &StringQueue{queue: make([]string, 0), mutex: &sync.Mutex{}}
+	return &StringQueue{queue: make([]string, 0), inFlight: make(map[string]struct{}), mutex: &sync.Mutex{}}
 }
 
 func (UploadQueue *StringQueue) Len() int {
@@ -18,10 +18,14 @@ func (UploadQueue *StringQueue) Add(path string) {
 	UploadQueue.queue = append(UploadQueue.queue, path)
 }
 
-// AddUnique adds path unless it is already waiting in the queue.
+// AddUnique adds path unless it is already waiting or being processed.
 func (UploadQueue *StringQueue) AddUnique(path string) bool {
 	UploadQueue.mutex.Lock()
 	defer UploadQueue.mutex.Unlock()
+
+	if _, processing := UploadQueue.inFlight[path]; processing {
+		return false
+	}
 
 	for _, queuedPath := range UploadQueue.queue {
 		if queuedPath == path {
@@ -39,13 +43,21 @@ func (UploadQueue *StringQueue) PopTopOfQueue() (bool, string) {
 	if len(UploadQueue.queue) > 0 {
 		rtn := UploadQueue.queue[0]
 		UploadQueue.queue = UploadQueue.queue[1:]
+		UploadQueue.inFlight[rtn] = struct{}{}
 		return true, rtn
 	}
 	return false, ""
 }
 
+// Done releases a path after the worker has finished processing it.
+func (UploadQueue *StringQueue) Done(path string) {
+	UploadQueue.mutex.Lock()
+	defer UploadQueue.mutex.Unlock()
+	delete(UploadQueue.inFlight, path)
+}
+
 func (UploadQueue *StringQueue) GetQueue() []string {
 	UploadQueue.mutex.Lock()
 	defer UploadQueue.mutex.Unlock()
-	return UploadQueue.queue
+	return append([]string(nil), UploadQueue.queue...)
 }

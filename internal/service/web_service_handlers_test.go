@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/ensingerphilipp/premiumizearr-nova/internal/config"
@@ -78,12 +79,107 @@ func TestPollBlackholeHandlerRejectsOtherMethods(t *testing.T) {
 
 func TestPollBlackholeHandlerRequiresInitializedWatcher(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/blackhole/poll", nil)
+	watcherWithoutQueue := NewDirectoryWatcherService()
+	for _, tc := range []struct {
+		name    string
+		watcher *DirectoryWatcherService
+	}{
+		{"missing watcher", nil},
+		{"missing queue", &watcherWithoutQueue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			webServer := WebServerService{directoryWatcherService: tc.watcher}
+			webServer.PollBlackholeHandler(response, request)
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("response status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+			}
+		})
+	}
+}
+
+func TestPollBlackholeHandlerReportsScanError(t *testing.T) {
+	directoryWatcher := NewDirectoryWatcherService()
+	directoryWatcher.Init(nil, &config.Config{BlackholeDirectory: filepath.Join(t.TempDir(), "missing")})
+	directoryWatcher.Queue = stringqueue.NewStringQueue()
+	webServer := WebServerService{directoryWatcherService: &directoryWatcher}
+	request := httptest.NewRequest(http.MethodPost, "/api/blackhole/poll", nil)
 	response := httptest.NewRecorder()
 
-	webServer := WebServerService{}
 	webServer.PollBlackholeHandler(response, request)
 
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("response status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
 	}
+}
+
+func TestScanNowSkipsInFlightFile(t *testing.T) {
+	blackholeDirectory := t.TempDir()
+	queuedPath := filepath.Join(blackholeDirectory, "movie.nzb")
+	if err := os.WriteFile(queuedPath, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	directoryWatcher := NewDirectoryWatcherService()
+	directoryWatcher.Init(nil, &config.Config{BlackholeDirectory: blackholeDirectory})
+	directoryWatcher.Queue = stringqueue.NewStringQueue()
+	if queued, err := directoryWatcher.ScanNow(); err != nil || queued != 1 {
+		t.Fatalf("first scan = (%d, %v), want (1, nil)", queued, err)
+	}
+	if ok, path := directoryWatcher.Queue.PopTopOfQueue(); !ok || path != queuedPath {
+		t.Fatalf("popped file = (%t, %q), want (true, %q)", ok, path, queuedPath)
+	}
+	if queued, err := directoryWatcher.ScanNow(); err != nil || queued != 0 {
+		t.Fatalf("scan while processing = (%d, %v), want (0, nil)", queued, err)
+	}
+	if length := directoryWatcher.Queue.Len(); length != 0 {
+		t.Fatalf("queue length while processing = %d, want 0", length)
+	}
+
+	directoryWatcher.Queue.Done(queuedPath)
+	if queued, err := directoryWatcher.ScanNow(); err != nil || queued != 1 {
+		t.Fatalf("scan after processing = (%d, %v), want (1, nil)", queued, err)
+	}
+}
+
+func TestScanNowConcurrentWithConfigUpdate(t *testing.T) {
+	firstDirectory := t.TempDir()
+	secondDirectory := t.TempDir()
+	directoryWatcher := NewDirectoryWatcherService()
+	currentConfig, err := config.LoadOrCreateConfig(t.TempDir(), directoryWatcher.ConfigUpdatedCallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentConfig.BlackholeDirectory = firstDirectory
+	directoryWatcher.Init(nil, &currentConfig)
+	directoryWatcher.Queue = stringqueue.NewStringQueue()
+
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		for i := 0; i < 40; i++ {
+			nextConfig := currentConfig
+			if i%2 == 0 {
+				nextConfig.BlackholeDirectory = secondDirectory
+			} else {
+				nextConfig.BlackholeDirectory = firstDirectory
+			}
+			currentConfig.UpdateConfig(nextConfig)
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		for i := 0; i < 40; i++ {
+			if _, err := directoryWatcher.ScanNow(); err != nil {
+				t.Errorf("concurrent scan failed: %v", err)
+				return
+			}
+		}
+	}()
+	close(start)
+	workers.Wait()
 }
