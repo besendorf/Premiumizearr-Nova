@@ -19,15 +19,25 @@ import (
 )
 
 type Premiumizeme struct {
-	APIKey string
+	APIKey     string
+	APIBaseURL string
+	HTTPClient *http.Client
 }
 
 func NewPremiumizemeClient(APIKey string) Premiumizeme {
-	return Premiumizeme{APIKey: APIKey}
+	return Premiumizeme{
+		APIKey:     APIKey,
+		APIBaseURL: "https://www.premiumize.me/api/",
+		HTTPClient: http.DefaultClient,
+	}
 }
 
 func (pm *Premiumizeme) createPremiumizemeURL(urlPath string) (url.URL, error) {
-	u, err := url.Parse("https://www.premiumize.me/api/")
+	baseURL := pm.APIBaseURL
+	if baseURL == "" {
+		baseURL = "https://www.premiumize.me/api/"
+	}
+	u, err := url.Parse(baseURL)
 	if err != nil {
 		return *u, err
 	}
@@ -36,6 +46,75 @@ func (pm *Premiumizeme) createPremiumizemeURL(urlPath string) (url.URL, error) {
 	q.Set("apikey", pm.APIKey)
 	u.RawQuery = q.Encode()
 	return *u, nil
+}
+
+func (pm *Premiumizeme) httpClient() *http.Client {
+	if pm.HTTPClient != nil {
+		return pm.HTTPClient
+	}
+	return http.DefaultClient
+}
+
+func (pm *Premiumizeme) GetAccountInfo() (AccountInfoResponse, error) {
+	var accountInfo AccountInfoResponse
+	if pm.APIKey == "" {
+		return accountInfo, ErrAPIKeyNotSet
+	}
+
+	accountURL, err := pm.createPremiumizemeURL("/account/info")
+	if err != nil {
+		return accountInfo, err
+	}
+
+	request, err := http.NewRequest(http.MethodGet, accountURL.String(), nil)
+	if err != nil {
+		return accountInfo, pm.accountInfoRequestError(err)
+	}
+
+	response, err := pm.httpClient().Do(request)
+	if err != nil {
+		return accountInfo, pm.accountInfoRequestError(err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return accountInfo, fmt.Errorf("account info request failed: %s (%d)", response.Status, response.StatusCode)
+	}
+
+	if err := json.NewDecoder(response.Body).Decode(&accountInfo); err != nil {
+		return accountInfo, err
+	}
+	if accountInfo.Status != "success" {
+		return accountInfo, pm.accountInfoRequestError(fmt.Errorf("%s: %s", accountInfo.Status, accountInfo.Message))
+	}
+
+	return accountInfo, nil
+}
+
+func (pm *Premiumizeme) accountInfoRequestError(err error) error {
+	message := err.Error()
+	for _, secret := range []string{pm.APIKey, url.QueryEscape(pm.APIKey), url.PathEscape(pm.APIKey)} {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return fmt.Errorf("account info request failed: %s", message)
+}
+
+// redactRequestError removes the premiumize.me API key from a request error
+// before it is returned to callers: the request URL carries the key as a
+// query parameter, so a raw *url.Error would print it into logs.
+func (pm *Premiumizeme) redactRequestError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	for _, secret := range []string{pm.APIKey, url.QueryEscape(pm.APIKey), url.PathEscape(pm.APIKey)} {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return fmt.Errorf("%s", message)
 }
 
 var (
@@ -56,9 +135,9 @@ func (pm *Premiumizeme) GetTransfers() ([]Transfer, error) {
 	var ret []Transfer
 	req, _ := http.NewRequest("GET", url.String(), nil)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := pm.httpClient().Do(req)
 	if err != nil {
-		return ret, err
+		return ret, pm.redactRequestError(err)
 	}
 
 	defer resp.Body.Close()
@@ -100,7 +179,7 @@ func (pm *Premiumizeme) ListFolder(folderID string) ([]Item, error) {
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return ret, err
+		return ret, pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -139,7 +218,7 @@ func (pm *Premiumizeme) GetFolders() ([]Item, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ret, err
+		return ret, pm.redactRequestError(err)
 	}
 
 	defer resp.Body.Close()
@@ -181,7 +260,6 @@ func (pm *Premiumizeme) CreateTransfer(filePath string, parentID string) error {
 		return err
 	}
 
-	client := &http.Client{}
 	var request *http.Request
 
 	switch filepath.Ext(file.Name()) {
@@ -197,9 +275,9 @@ func (pm *Premiumizeme) CreateTransfer(filePath string, parentID string) error {
 		return err
 	}
 
-	resp, err := client.Do(request)
+	resp, err := pm.httpClient().Do(request)
 	if err != nil {
-		return err
+		return pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -246,7 +324,7 @@ func (pm *Premiumizeme) DeleteFolder(folderID string) error {
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return err
+		return pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -294,7 +372,7 @@ func (pm *Premiumizeme) MoveItem(itemID string, folderID string) error {
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return err
+		return pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -344,7 +422,7 @@ func (pm *Premiumizeme) CreateFolder(folderName string, parentID *string) (strin
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return "", pm.redactRequestError(err)
 	}
 	defer resp.Body.Close()
 
@@ -377,15 +455,14 @@ func (pm *Premiumizeme) DeleteTransfer(id string) error {
 		return err
 	}
 
-	client := &http.Client{}
 	request, err := createDeleteRequest(id, &url)
 	if err != nil {
 		return err
 	}
 
-	resp, err := client.Do(request)
+	resp, err := pm.httpClient().Do(request)
 	if err != nil {
-		return err
+		return pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -607,7 +684,7 @@ func (pm *Premiumizeme) generateZip(ID string, srcType SRCType) (string, error) 
 	client := &http.Client{}
 	resp, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return "", pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -659,7 +736,7 @@ func (pm *Premiumizeme) GenerateFileLink(ID string) (string, error) {
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return "", pm.redactRequestError(err)
 	}
 
 	if resp.StatusCode != 200 {
