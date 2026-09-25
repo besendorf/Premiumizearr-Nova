@@ -38,6 +38,12 @@ func (UploadQueue *StringQueue) AddIfAbsent(path string) bool {
 	return true
 }
 
+// PopTopOfQueue removes the oldest waiting path and hands it to the
+// caller. From this point the path is in-flight until Done(path) is
+// called: while in-flight, Add and AddIfAbsent reject it and GetQueue
+// does not include it. Callers must call Done when processing is
+// finished, on every completion path including errors, or the path
+// cannot be re-queued until the process restarts.
 func (UploadQueue *StringQueue) PopTopOfQueue() (bool, string) {
 	UploadQueue.mutex.Lock()
 	defer UploadQueue.mutex.Unlock()
