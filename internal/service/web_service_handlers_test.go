@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -99,8 +100,9 @@ func TestPollBlackholeHandlerRequiresInitializedWatcher(t *testing.T) {
 }
 
 func TestPollBlackholeHandlerReportsScanError(t *testing.T) {
+	missingDirectory := filepath.Join(t.TempDir(), "missing")
 	directoryWatcher := NewDirectoryWatcherService()
-	directoryWatcher.Init(nil, &config.Config{BlackholeDirectory: filepath.Join(t.TempDir(), "missing")})
+	directoryWatcher.Init(nil, &config.Config{BlackholeDirectory: missingDirectory})
 	directoryWatcher.Queue = stringqueue.NewStringQueue()
 	webServer := WebServerService{directoryWatcherService: &directoryWatcher}
 	request := httptest.NewRequest(http.MethodPost, "/api/blackhole/poll", nil)
@@ -110,6 +112,48 @@ func TestPollBlackholeHandlerReportsScanError(t *testing.T) {
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("response status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+	// R1-4: the unauthenticated 500 body must stay generic; the OS error
+	// (which names the configured directory) belongs in the log.
+	if strings.Contains(response.Body.String(), missingDirectory) {
+		t.Fatalf("response body leaks the configured blackhole directory: %s", response.Body.String())
+	}
+}
+
+func TestBlackholeHandlerRendersBaseNameAcrossPathSeparators(t *testing.T) {
+	directoryWatcher := NewDirectoryWatcherService()
+	directoryWatcher.Queue = stringqueue.NewStringQueue()
+	// Poll-mode queue keys are OS-native: forward slashes on Linux,
+	// backslashes on Windows (filepath.Join at the scan site).
+	directoryWatcher.Queue.Add("/bh/movie.nzb")
+	directoryWatcher.Queue.Add(`C:\bh\movie.nzb`)
+	webServer := WebServerService{directoryWatcherService: &directoryWatcher}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/blackhole", nil)
+	response := httptest.NewRecorder()
+	webServer.BlackholeHandler(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var body BlackholeResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(body.BlackholeFiles))
+	for _, file := range body.BlackholeFiles {
+		got = append(got, file.Name)
+	}
+	// R1-9: both separators must render the file name only; Linux display
+	// stays unchanged.
+	want := []string{"movie.nzb", "movie.nzb"}
+	if len(got) != len(want) {
+		t.Fatalf("displayed names = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("displayed names = %v, want %v", got, want)
+		}
 	}
 }
 
@@ -182,4 +226,13 @@ func TestScanNowConcurrentWithConfigUpdate(t *testing.T) {
 	}()
 	close(start)
 	workers.Wait()
+
+	// R1-6: the watcher's cached directory must follow the last config
+	// update, not the one passed to Init.
+	finalConfig := currentConfig
+	finalConfig.BlackholeDirectory = secondDirectory
+	currentConfig.UpdateConfig(finalConfig)
+	if got := directoryWatcher.getBlackholeDirectory(); got != secondDirectory {
+		t.Fatalf("cached blackhole directory = %q, want last-updated %q", got, secondDirectory)
+	}
 }

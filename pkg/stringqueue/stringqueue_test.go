@@ -81,6 +81,31 @@ func TestAddIfAbsentReportsInsertionAndPreservesOrder(t *testing.T) {
 	}
 }
 
+func TestGetQueueReturnsCopy(t *testing.T) {
+	queue := NewStringQueue()
+	queue.Add("/blackhole/a.nzb")
+	queue.Add("/blackhole/b.nzb")
+
+	snapshot := queue.GetQueue()
+	if len(snapshot) != 2 {
+		t.Fatalf("queue length = %d, want 2", len(snapshot))
+	}
+	// R1-7: mutate the returned snapshot; the queue's state and pop order
+	// must be unaffected.
+	snapshot[0] = "mutated"
+	snapshot = append(snapshot, "appended")
+
+	if got := queue.Len(); got != 2 {
+		t.Fatalf("queue length after mutating the snapshot = %d, want 2", got)
+	}
+	for _, want := range []string{"/blackhole/a.nzb", "/blackhole/b.nzb"} {
+		ok, got := queue.PopTopOfQueue()
+		if !ok || got != want {
+			t.Fatalf("popped %q, want %q", got, want)
+		}
+	}
+}
+
 func TestAddIfAbsentExcludesInFlightPath(t *testing.T) {
 	queue := NewStringQueue()
 	if !queue.AddIfAbsent("movie.nzb") {
